@@ -1,23 +1,23 @@
-# MLH PE Hackathon 2026 — URL Shortener
+# MLH PE Hackathon 2026 â€” URL Shortener
 
 **Track: Reliability Engineering**
 
 A production-grade URL shortener built on the official MLH PE Hackathon 2026 template.
-Stack: Flask · Peewee ORM · PostgreSQL · pytest · GitHub Actions
+
+**Stack:** Flask Â· Peewee ORM Â· PostgreSQL Â· pytest Â· GitHub Actions
 
 ---
 
 ## Architecture
-Client
-|
-v
-Flask App (localhost:5000)
-|-- POST /shorten     ? creates short code ? saves to PostgreSQL
-|-- GET  /<code>      ? looks up code      ? redirects to target URL
-|-- GET  /health      ? returns {"status":"ok"}
-|-- GET  /urls        ? lists all active short URLs
-v
-PostgreSQL (hackathon_db ? short_urls table)
+
+The service follows a simple three-layer architecture:
+
+**Client â†’ Flask App â†’ PostgreSQL**
+
+- Client sends a POST to `/shorten` with a long URL
+- Flask validates the URL, generates a 6-character code, and saves it to PostgreSQL
+- Client later visits `/<code>` and Flask looks it up and redirects to the original URL
+- The `/health` endpoint lets load balancers verify the app is alive at any time
 
 ---
 
@@ -27,17 +27,23 @@ PostgreSQL (hackathon_db ? short_urls table)
 - PostgreSQL 18
 - uv package manager
 
-Install uv:
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-# Windows PowerShell:
+Install uv on Windows:
+
+```
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Install uv on macOS / Linux:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ---
 
 ## Setup and Run
-```bash
+
+```
 # 1. Clone
 git clone https://github.com/Shishir067/pe-hackathon-2026
 cd pe-hackathon-2026
@@ -57,82 +63,130 @@ uv run python -c "from app import create_app; from app.database import db; from 
 
 # 6. Run
 uv run run.py
-
-# 7. Verify
-curl http://localhost:5000/health
-# ? {"status": "ok"}
 ```
+
+Verify it is running:
+
+```
+curl http://localhost:5000/health
+```
+
+Expected response: `{"status": "ok"}`
 
 ---
 
 ## API Endpoints
 
-### GET /health
-Health check for load balancers.
-Response 200: {"status": "ok"}
-
 ### POST /shorten
-Create a short URL.
-Request:  {"url": "https://example.com"}
-Response 201: {"code": "abc123", "short_url": "/abc123", "target": "https://example.com"}
-Response 400: {"error": "Field url is required"}
-Response 422: {"error": "Invalid URL. Must start with http:// or https://"}
 
-### GET /<code>
-Redirect to target URL.
-Response 302: redirects to target
-Response 404: {"error": "Short URL not found"}
-Response 410: {"error": "This short URL has been deactivated"}
+Create a short URL.
+
+Request body:
+
+```json
+{"url": "https://example.com"}
+```
+
+Responses:
+
+| Status | Body |
+|--------|------|
+| 201 | `{"code": "abc123", "short_url": "/abc123", "target": "https://example.com"}` |
+| 400 | `{"error": "Field url is required"}` |
+| 422 | `{"error": "Invalid URL. Must start with http:// or https://"}` |
+
+---
+
+### GET /\<code\>
+
+Redirect to the original URL.
+
+Responses:
+
+| Status | Meaning |
+|--------|---------|
+| 302 | Redirects to target URL |
+| 404 | `{"error": "Short URL not found"}` |
+| 410 | `{"error": "This short URL has been deactivated"}` |
+
+---
+
+### GET /health
+
+Health check endpoint used by load balancers.
+
+Response: `200 {"status": "ok"}`
+
+---
 
 ### GET /urls
+
 List all active short URLs.
-Response 200: [{"code": "abc123", "target": "https://example.com", "hits": 5, ...}]
 
-### GET /urls/<code>
+Response: `200` â€” array of URL objects
+
+---
+
+### GET /urls/\<code\>
+
 Get details for one short URL.
-Response 200: {"code": "abc123", "target": "...", "hits": 3, "is_active": true}
-Response 404: {"error": "Not found"}
 
-### DELETE /urls/<code>
-Soft-delete a short URL.
-Response 200: {"message": "Short URL abc123 deactivated"}
-Response 404: {"error": "Not found"}
+| Status | Body |
+|--------|------|
+| 200 | `{"code": "abc123", "target": "...", "hits": 3, "is_active": true}` |
+| 404 | `{"error": "Not found"}` |
+
+---
+
+### DELETE /urls/\<code\>
+
+Soft-delete a short URL. Subsequent redirects to this code return 410.
+
+| Status | Body |
+|--------|------|
+| 200 | `{"message": "Short URL abc123 deactivated"}` |
+| 404 | `{"error": "Not found"}` |
 
 ---
 
 ## Running Tests
-```bash
-# All tests
-uv run pytest tests/ -v
 
-# With coverage report
+Run all tests:
+
+```
+uv run pytest tests/ -v
+```
+
+Run with coverage report:
+
+```
 uv run pytest tests/ --cov=app --cov-report=term-missing
 ```
 
-Expected: 24 tests passing, 81% coverage.
+Expected result: 24 tests passing, 81% total coverage.
 
 ---
 
 ## Error Handling
 
-| Scenario | Status | Response |
-|---|---|---|
-| Route not found | 404 | {"error": "Resource not found"} |
-| Method not allowed | 405 | {"error": "Method not allowed"} |
-| Internal server error | 500 | {"error": "Internal server error"} |
-| Missing url field | 400 | {"error": "Field url is required"} |
-| Invalid URL format | 422 | {"error": "Invalid URL..."} |
-| Code not found | 404 | {"error": "Short URL not found"} |
-| Deactivated code | 410 | {"error": "This short URL has been deactivated"} |
+Every error returns clean JSON. The app never exposes a raw Python stack trace.
 
-All errors return clean JSON. The app never returns a raw Python stack trace.
+| Scenario | Status | Response |
+|----------|--------|----------|
+| Route not found | 404 | `{"error": "Resource not found", "status": 404}` |
+| Method not allowed | 405 | `{"error": "Method not allowed", "status": 405}` |
+| Internal server error | 500 | `{"error": "Internal server error", "status": 500}` |
+| Missing url field | 400 | `{"error": "Field url is required"}` |
+| Invalid URL format | 422 | `{"error": "Invalid URL. Must start with http:// or https://"}` |
+| Code not found | 404 | `{"error": "Short URL not found"}` |
+| Deactivated code | 410 | `{"error": "This short URL has been deactivated"}` |
 
 ---
 
 ## Environment Variables
 
 | Variable | Description |
-|---|---|
+|----------|-------------|
 | DATABASE_NAME | PostgreSQL database name (hackathon_db) |
 | DATABASE_HOST | Database host (localhost) |
 | DATABASE_PORT | Database port (5432) |
@@ -144,27 +198,40 @@ All errors return clean JSON. The app never returns a raw Python stack trace.
 
 ## CI/CD
 
-GitHub Actions runs on every push:
-- Installs dependencies with uv
-- Spins up PostgreSQL service
-- Runs 24 tests with coverage
-- Enforces minimum 50% coverage
-- Blocks deploy if any test fails
+GitHub Actions runs on every push and does the following:
+
+1. Installs dependencies with uv
+2. Spins up a PostgreSQL service container
+3. Runs all 24 tests with coverage measurement
+4. Enforces minimum 50% coverage
+5. Blocks the deploy job if any test fails
+
+CI workflow: `.github/workflows/ci.yml`
 
 ---
 
 ## Failure Modes
 
 ### Database unavailable
-Symptom: All endpoints return 500 JSON error.
-Fix: Check PostgreSQL is running. Restart with `pg_ctl start`.
-The app catches the exception and returns clean JSON, never a stack trace.
+
+**Symptom:** All endpoints return a 500 JSON error body.
+
+**Fix:** Check PostgreSQL is running. On Windows restart the PostgreSQL 18 service. The global error handler in `app/__init__.py` catches the connection exception and returns clean JSON instead of crashing.
 
 ### Duplicate short code collision
-Symptom: Extremely rare. App retries up to 5 times before returning 500.
-Fix: No action needed.
+
+**Symptom:** Extremely rare â€” there are 62^6 (56 billion) possible codes. The app retries code generation up to 5 times before returning 500.
+
+**Fix:** No action needed unless the database has billions of rows.
 
 ### Invalid input submitted
-Symptom: Client sends bad data.
-Fix: Input validation rejects all bad input before touching the DB.
-Returns 400 or 422 with descriptive JSON error.
+
+**Symptom:** Client sends non-JSON, a missing url field, or a malformed URL.
+
+**Fix:** Input validation in `/shorten` rejects all bad input before it touches the database. Returns 400 for missing fields and 422 for invalid URLs, both with descriptive JSON error messages.
+
+### Deactivated URL accessed
+
+**Symptom:** A previously deleted short code returns 410 instead of redirecting.
+
+**Fix:** This is expected behavior. The DELETE endpoint soft-deletes by setting `is_active=False`. The record stays in the database for audit purposes but no longer redirects.
