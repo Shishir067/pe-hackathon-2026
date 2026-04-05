@@ -1,12 +1,17 @@
 import pytest
 from app import create_app
+from app.database import db
 from app.models.url import ShortURL, generate_code, is_valid_url
 
 @pytest.fixture
 def app():
     application = create_app()
     application.config["TESTING"] = True
+    with application.app_context():
+        db.create_tables([ShortURL], safe=True)
     yield application
+    with application.app_context():
+        db.drop_tables([ShortURL], safe=True)
 
 @pytest.fixture
 def client(app):
