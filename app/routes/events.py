@@ -53,9 +53,17 @@ def create_event():
     if not event_type or not isinstance(event_type, str):
         return jsonify({"error": "event_type is required and must be a string"}), 422
 
-    url_id = data.get("url_id")
+    uurl_id = data.get("url_id")
+    if url_id is not None and not isinstance(url_id, int):
+        return jsonify({"error": "url_id must be an integer"}), 422
+
     user_id = data.get("user_id")
+    if user_id is not None and not isinstance(user_id, int):
+        return jsonify({"error": "user_id must be an integer"}), 422
+
     details = data.get("details")
+    if details is not None and not isinstance(details, dict):
+        return jsonify({"error": "details must be a JSON object"}), 422
 
     if details is not None and not isinstance(details, dict):
         return jsonify({"error": "details must be a JSON object"}), 422

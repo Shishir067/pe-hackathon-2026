@@ -70,6 +70,8 @@ def create_url():
             return jsonify({"error": f"User {user_id} not found"}), 404
 
     title = data.get("title")
+    if title is not None and not isinstance(title, str):
+     return jsonify({"error": "title must be a string"}), 422
 
     for _ in range(5):
         code = generate_short_code()
