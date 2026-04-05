@@ -30,8 +30,55 @@ def event_to_dict(e):
 
 @events_bp.route("/events", methods=["GET"])
 def list_events():
-    events = Event.select().order_by(Event.id)
-    return jsonify([event_to_dict(e) for e in events]), 200
+    url_id = request.args.get("url_id", type=int)
+    event_type = request.args.get("event_type")
+
+    query = Event.select().order_by(Event.id)
+
+    if url_id is not None:
+        query = query.where(Event.url_id == url_id)
+    if event_type is not None:
+        query = query.where(Event.event_type == event_type)
+
+    return jsonify([event_to_dict(e) for e in query]), 200
+
+
+@events_bp.route("/events", methods=["POST"])
+def create_event():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Request body must be JSON"}), 400
+
+    event_type = data.get("event_type")
+    if not event_type or not isinstance(event_type, str):
+        return jsonify({"error": "event_type is required and must be a string"}), 422
+
+    url_id = data.get("url_id")
+    user_id = data.get("user_id")
+    details = data.get("details")
+
+    if details is not None and not isinstance(details, dict):
+        return jsonify({"error": "details must be a JSON object"}), 422
+
+    try:
+        event = Event.create(
+            url_id=url_id,
+            user_id=user_id,
+            event_type=event_type,
+            timestamp=datetime.datetime.now(),
+            details=json.dumps(details) if details else None,
+        )
+        return jsonify(event_to_dict(event)), 201
+    except Exception:
+        db.execute_sql("SELECT setval('events_id_seq', (SELECT MAX(id) FROM events))")
+        event = Event.create(
+            url_id=url_id,
+            user_id=user_id,
+            event_type=event_type,
+            timestamp=datetime.datetime.now(),
+            details=json.dumps(details) if details else None,
+        )
+        return jsonify(event_to_dict(event)), 201
 
 
 @events_bp.route("/events/bulk", methods=["POST"])
@@ -43,7 +90,7 @@ def bulk_events():
     content = file.read().decode("utf-8")
     reader = csv.DictReader(io.StringIO(content))
 
-    imported = []
+    imported = 0
     with db.atomic():
         for row in reader:
             try:
@@ -51,17 +98,22 @@ def bulk_events():
             except (ValueError, AttributeError):
                 ts = datetime.datetime.now()
 
-            event, created = Event.get_or_create(
-                id=int(row["id"]),
-                defaults={
-                    "url_id": int(row["url_id"]) if row.get("url_id") else None,
-                    "user_id": int(row["user_id"]) if row.get("user_id") else None,
-                    "event_type": row.get("event_type", ""),
-                    "timestamp": ts,
-                    "details": row.get("details"),
-                }
+            db.execute_sql(
+                """
+                INSERT INTO events (id, url_id, user_id, event_type, timestamp, details)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    int(row["id"]),
+                    int(row["url_id"]) if row.get("url_id") else None,
+                    int(row["user_id"]) if row.get("user_id") else None,
+                    row.get("event_type", ""),
+                    ts,
+                    row.get("details"),
+                )
             )
-            if created:
-                imported.append(event_to_dict(event))
+            imported += 1
 
-    return jsonify({"imported": len(imported), "count": len(imported)}), 201
+    db.execute_sql("SELECT setval('events_id_seq', (SELECT MAX(id) FROM events))")
+    return jsonify({"imported": imported, "count": imported}), 201

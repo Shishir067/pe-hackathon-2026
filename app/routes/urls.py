@@ -28,9 +28,17 @@ def url_to_dict(u):
 @urls_bp.route("/urls", methods=["GET"])
 def list_urls():
     user_id = request.args.get("user_id", type=int)
+    is_active = request.args.get("is_active")
+
     query = URL.select().order_by(URL.id)
+
     if user_id:
         query = query.where(URL.user_id == user_id)
+
+    if is_active is not None:
+        active_bool = is_active.lower() in ("true", "1", "yes")
+        query = query.where(URL.is_active == active_bool)
+
     return jsonify([url_to_dict(u) for u in query]), 200
 
 
@@ -71,15 +79,27 @@ def create_url():
         return jsonify({"error": "Could not generate unique short code"}), 500
 
     now = datetime.datetime.now()
-    url = URL.create(
-        user_id=user_id,
-        short_code=code,
-        original_url=original_url,
-        title=title,
-        is_active=True,
-        created_at=now,
-        updated_at=now,
-    )
+    try:
+        url = URL.create(
+            user_id=user_id,
+            short_code=code,
+            original_url=original_url,
+            title=title,
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+    except Exception:
+        db.execute_sql("SELECT setval('urls_id_seq', (SELECT MAX(id) FROM urls))")
+        url = URL.create(
+            user_id=user_id,
+            short_code=code,
+            original_url=original_url,
+            title=title,
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
 
     Event.create(
         url_id=url.id,
@@ -115,6 +135,16 @@ def update_url(url_id):
     return jsonify(url_to_dict(url)), 200
 
 
+@urls_bp.route("/urls/<int:url_id>", methods=["DELETE"])
+def delete_url(url_id):
+    try:
+        url = URL.get_by_id(url_id)
+        url.delete_instance()
+        return jsonify({"message": f"URL {url_id} deleted"}), 200
+    except URL.DoesNotExist:
+        return jsonify({"error": "URL not found"}), 404
+
+
 @urls_bp.route("/urls/bulk", methods=["POST"])
 def bulk_urls():
     if "file" not in request.files:
@@ -124,7 +154,7 @@ def bulk_urls():
     content = file.read().decode("utf-8")
     reader = csv.DictReader(io.StringIO(content))
 
-    imported = []
+    imported = 0
     with db.atomic():
         for row in reader:
             def parse_dt(val):
@@ -137,22 +167,27 @@ def bulk_urls():
 
             is_active = str(row.get("is_active", "True")).strip().lower() not in ("false", "0", "no")
 
-            url, created = URL.get_or_create(
-                id=int(row["id"]),
-                defaults={
-                    "user_id": int(row["user_id"]) if row.get("user_id") else None,
-                    "short_code": row["short_code"],
-                    "original_url": row["original_url"],
-                    "title": row.get("title"),
-                    "is_active": is_active,
-                    "created_at": parse_dt(row.get("created_at", "")),
-                    "updated_at": parse_dt(row.get("updated_at", "")),
-                }
+            db.execute_sql(
+                """
+                INSERT INTO urls (id, user_id, short_code, original_url, title, is_active, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    int(row["id"]),
+                    int(row["user_id"]) if row.get("user_id") else None,
+                    row["short_code"],
+                    row["original_url"],
+                    row.get("title"),
+                    is_active,
+                    parse_dt(row.get("created_at", "")),
+                    parse_dt(row.get("updated_at", "")),
+                )
             )
-            if created:
-                imported.append(url_to_dict(url))
+            imported += 1
 
-    return jsonify({"imported": len(imported), "count": len(imported)}), 201
+    db.execute_sql("SELECT setval('urls_id_seq', (SELECT MAX(id) FROM urls))")
+    return jsonify({"imported": imported, "count": imported}), 201
 
 
 @urls_bp.route("/<short_code>")
@@ -168,13 +203,14 @@ def redirect_url(short_code):
     if not url.is_active:
         return jsonify({"error": "This short URL has been deactivated"}), 410
 
-    URL.update(updated_at=datetime.datetime.now()).where(URL.short_code == short_code).execute()
+    now = datetime.datetime.now()
+    URL.update(updated_at=now).where(URL.short_code == short_code).execute()
 
     Event.create(
         url_id=url.id,
         user_id=url.user_id,
-        event_type="visited",
-        timestamp=datetime.datetime.now(),
+        event_type="click",
+        timestamp=now,
         details=json.dumps({"short_code": short_code}),
     )
 

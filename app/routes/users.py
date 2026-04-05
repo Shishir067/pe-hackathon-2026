@@ -56,8 +56,13 @@ def create_user():
     if User.select().where(User.email == email).exists():
         return jsonify({"error": "email already exists"}), 409
 
-    user = User.create(username=username, email=email)
-    return jsonify(user_to_dict(user)), 201
+    try:
+        user = User.create(username=username, email=email)
+        return jsonify(user_to_dict(user)), 201
+    except Exception:
+        db.execute_sql("SELECT setval('users_id_seq', (SELECT MAX(id) FROM users))")
+        user = User.create(username=username, email=email)
+        return jsonify(user_to_dict(user)), 201
 
 
 @users_bp.route("/users/<int:user_id>", methods=["PUT"])
@@ -84,6 +89,16 @@ def update_user(user_id):
     return jsonify(user_to_dict(user)), 200
 
 
+@users_bp.route("/users/<int:user_id>", methods=["DELETE"])
+def delete_user(user_id):
+    try:
+        user = User.get_by_id(user_id)
+        user.delete_instance()
+        return jsonify({"message": f"User {user_id} deleted"}), 200
+    except User.DoesNotExist:
+        return jsonify({"error": "User not found"}), 404
+
+
 @users_bp.route("/users/bulk", methods=["POST"])
 def bulk_users():
     if "file" not in request.files:
@@ -104,7 +119,6 @@ def bulk_users():
             except (ValueError, AttributeError):
                 created_at = datetime.datetime.now()
 
-            # Use raw SQL INSERT ... ON CONFLICT DO NOTHING to skip duplicates safely
             db.execute_sql(
                 """
                 INSERT INTO users (id, username, email, created_at)
@@ -115,4 +129,5 @@ def bulk_users():
             )
             imported += 1
 
+    db.execute_sql("SELECT setval('users_id_seq', (SELECT MAX(id) FROM users))")
     return jsonify({"imported": imported, "count": imported}), 201
