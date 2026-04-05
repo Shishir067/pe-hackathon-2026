@@ -1,35 +1,25 @@
 import datetime
-import re
 import random
 import string
-
-from peewee import CharField, TextField, IntegerField, DateTimeField, BooleanField
+from peewee import CharField, TextField, BooleanField, DateTimeField, AutoField, IntegerField, ForeignKeyField
 from app.database import BaseModel
+from app.models.user import User
 
-URL_REGEX = re.compile(
-    r'^https?://'
-    r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
-    r'localhost|'
-    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-    r'(?::\d+)?'
-    r'(?:/?|[/?]\S+)$', re.IGNORECASE
-)
 
-def is_valid_url(url: str) -> bool:
-    if not url or not isinstance(url, str):
-        return False
-    return bool(URL_REGEX.match(url.strip()))
-
-def generate_code(length: int = 6) -> str:
+def generate_short_code(length=6):
     chars = string.ascii_letters + string.digits
     return ''.join(random.choices(chars, k=length))
 
-class ShortURL(BaseModel):
-    code = CharField(unique=True, max_length=10, index=True)
-    target = TextField()
-    hits = IntegerField(default=0)
+
+class URL(BaseModel):
+    id = AutoField()
+    user_id = IntegerField(null=True)
+    short_code = CharField(unique=True, max_length=10, index=True)
+    original_url = TextField()
+    title = CharField(max_length=255, null=True)
     is_active = BooleanField(default=True)
     created_at = DateTimeField(default=datetime.datetime.now)
+    updated_at = DateTimeField(default=datetime.datetime.now)
 
     class Meta:
-        table_name = 'short_urls'
+        table_name = "urls"
