@@ -1,192 +1,170 @@
-# MLH PE Hackathon — Flask + Peewee + PostgreSQL Template
+# MLH PE Hackathon 2026 � URL Shortener
 
-A minimal hackathon starter template. You get the scaffolding and database wiring — you build the models, routes, and CSV loading logic.
+**Track: Reliability Engineering**
 
-**Stack:** Flask · Peewee ORM · PostgreSQL · uv
+A production-grade URL shortener built on the official MLH PE Hackathon 2026 template.
+Stack: Flask � Peewee ORM � PostgreSQL � pytest � GitHub Actions
 
-## **Important**
+---
 
-You need to work with around the seed files that you can find in [MLH PE Hackathon](https://mlh-pe-hackathon.com) platform. This will help you build the schema for the database and have some data to do some testing and submit your project for judging. If you need help with this, reach out on Discord or on the Q&A tab on the platform.
+## Architecture
+Client
+|
+v
+Flask App (localhost:5000)
+|-- POST /shorten     ? creates short code ? saves to PostgreSQL
+|-- GET  /<code>      ? looks up code      ? redirects to target URL
+|-- GET  /health      ? returns {"status":"ok"}
+|-- GET  /urls        ? lists all active short URLs
+v
+PostgreSQL (hackathon_db ? short_urls table)
+
+---
 
 ## Prerequisites
 
-- **uv** — a fast Python package manager that handles Python versions, virtual environments, and dependencies automatically.
-  Install it with:
-  ```bash
-  # macOS / Linux
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+- Python 3.12+
+- PostgreSQL 18
+- uv package manager
 
-  # Windows (PowerShell)
-  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-  ```
-  For other methods see the [uv installation docs](https://docs.astral.sh/uv/getting-started/installation/).
-- PostgreSQL running locally (you can use Docker or a local instance)
-
-## uv Basics
-
-`uv` manages your Python version, virtual environment, and dependencies automatically — no manual `python -m venv` needed.
-
-| Command | What it does |
-|---------|--------------|
-| `uv sync` | Install all dependencies (creates `.venv` automatically) |
-| `uv run <script>` | Run a script using the project's virtual environment |
-| `uv add <package>` | Add a new dependency |
-| `uv remove <package>` | Remove a dependency |
-
-## Quick Start
-
+Install uv:
 ```bash
-# 1. Clone the repo
-git clone <repo-url> && cd mlh-pe-hackathon
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Windows PowerShell:
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+---
+
+## Setup and Run
+```bash
+# 1. Clone
+git clone https://github.com/Shishir067/pe-hackathon-2026
+cd pe-hackathon-2026
 
 # 2. Install dependencies
 uv sync
 
-# 3. Create the database
-createdb hackathon_db
+# 3. Create database
+createdb -U postgres hackathon_db
 
 # 4. Configure environment
-cp .env.example .env   # edit if your DB credentials differ
+cp .env.example .env
+# Edit .env and set your DATABASE_PASSWORD
 
-# 5. Run the server
+# 5. Create tables
+uv run python -c "from app import create_app; from app.database import db; from app.models.url import ShortURL; app = create_app(); ctx = app.app_context(); ctx.push(); db.create_tables([ShortURL], safe=True)"
+
+# 6. Run
 uv run run.py
 
-# 6. Verify
+# 7. Verify
 curl http://localhost:5000/health
-# → {"status":"ok"}
+# ? {"status": "ok"}
 ```
 
-## Project Structure
+---
 
-```
-mlh-pe-hackathon/
-├── app/
-│   ├── __init__.py          # App factory (create_app)
-│   ├── database.py          # DatabaseProxy, BaseModel, connection hooks
-│   ├── models/
-│   │   └── __init__.py      # Import your models here
-│   └── routes/
-│       └── __init__.py      # register_routes() — add blueprints here
-├── .env.example             # DB connection template
-├── .gitignore               # Python + uv gitignore
-├── .python-version          # Pin Python version for uv
-├── pyproject.toml           # Project metadata + dependencies
-├── run.py                   # Entry point: uv run run.py
-└── README.md
-```
+## API Endpoints
 
-## How to Add a Model
+### GET /health
+Health check for load balancers.
+Response 200: {"status": "ok"}
 
-1. Create a file in `app/models/`, e.g. `app/models/product.py`:
+### POST /shorten
+Create a short URL.
+Request:  {"url": "https://example.com"}
+Response 201: {"code": "abc123", "short_url": "/abc123", "target": "https://example.com"}
+Response 400: {"error": "Field url is required"}
+Response 422: {"error": "Invalid URL. Must start with http:// or https://"}
 
-```python
-from peewee import CharField, DecimalField, IntegerField
+### GET /<code>
+Redirect to target URL.
+Response 302: redirects to target
+Response 404: {"error": "Short URL not found"}
+Response 410: {"error": "This short URL has been deactivated"}
 
-from app.database import BaseModel
+### GET /urls
+List all active short URLs.
+Response 200: [{"code": "abc123", "target": "https://example.com", "hits": 5, ...}]
 
+### GET /urls/<code>
+Get details for one short URL.
+Response 200: {"code": "abc123", "target": "...", "hits": 3, "is_active": true}
+Response 404: {"error": "Not found"}
 
-class Product(BaseModel):
-    name = CharField()
-    category = CharField()
-    price = DecimalField(decimal_places=2)
-    stock = IntegerField()
-```
+### DELETE /urls/<code>
+Soft-delete a short URL.
+Response 200: {"message": "Short URL abc123 deactivated"}
+Response 404: {"error": "Not found"}
 
-2. Import it in `app/models/__init__.py`:
+---
 
-```python
-from app.models.product import Product
-```
+## Running Tests
+```bash
+# All tests
+uv run pytest tests/ -v
 
-3. Create the table (run once in a Python shell or a setup script):
-
-```python
-from app.database import db
-from app.models.product import Product
-
-db.create_tables([Product])
+# With coverage report
+uv run pytest tests/ --cov=app --cov-report=term-missing
 ```
 
-## How to Add Routes
+Expected: 24 tests passing, 81% coverage.
 
-1. Create a blueprint in `app/routes/`, e.g. `app/routes/products.py`:
+---
 
-```python
-from flask import Blueprint, jsonify
-from playhouse.shortcuts import model_to_dict
+## Error Handling
 
-from app.models.product import Product
+| Scenario | Status | Response |
+|---|---|---|
+| Route not found | 404 | {"error": "Resource not found"} |
+| Method not allowed | 405 | {"error": "Method not allowed"} |
+| Internal server error | 500 | {"error": "Internal server error"} |
+| Missing url field | 400 | {"error": "Field url is required"} |
+| Invalid URL format | 422 | {"error": "Invalid URL..."} |
+| Code not found | 404 | {"error": "Short URL not found"} |
+| Deactivated code | 410 | {"error": "This short URL has been deactivated"} |
 
-products_bp = Blueprint("products", __name__)
+All errors return clean JSON. The app never returns a raw Python stack trace.
 
+---
 
-@products_bp.route("/products")
-def list_products():
-    products = Product.select()
-    return jsonify([model_to_dict(p) for p in products])
-```
+## Environment Variables
 
-2. Register it in `app/routes/__init__.py`:
+| Variable | Description |
+|---|---|
+| DATABASE_NAME | PostgreSQL database name (hackathon_db) |
+| DATABASE_HOST | Database host (localhost) |
+| DATABASE_PORT | Database port (5432) |
+| DATABASE_USER | PostgreSQL username |
+| DATABASE_PASSWORD | PostgreSQL password |
+| FLASK_DEBUG | Enable debug mode (true/false) |
 
-```python
-def register_routes(app):
-    from app.routes.products import products_bp
-    app.register_blueprint(products_bp)
-```
+---
 
-## How to Load CSV Data
+## CI/CD
 
-```python
-import csv
-from peewee import chunked
-from app.database import db
-from app.models.product import Product
+GitHub Actions runs on every push:
+- Installs dependencies with uv
+- Spins up PostgreSQL service
+- Runs 24 tests with coverage
+- Enforces minimum 50% coverage
+- Blocks deploy if any test fails
 
-def load_csv(filepath):
-    with open(filepath, newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
+---
 
-    with db.atomic():
-        for batch in chunked(rows, 100):
-            Product.insert_many(batch).execute()
-```
+## Failure Modes
 
-## Useful Peewee Patterns
+### Database unavailable
+Symptom: All endpoints return 500 JSON error.
+Fix: Check PostgreSQL is running. Restart with `pg_ctl start`.
+The app catches the exception and returns clean JSON, never a stack trace.
 
-```python
-from peewee import fn
-from playhouse.shortcuts import model_to_dict
+### Duplicate short code collision
+Symptom: Extremely rare. App retries up to 5 times before returning 500.
+Fix: No action needed.
 
-# Select all
-products = Product.select()
-
-# Filter
-cheap = Product.select().where(Product.price < 10)
-
-# Get by ID
-p = Product.get_by_id(1)
-
-# Create
-Product.create(name="Widget", category="Tools", price=9.99, stock=50)
-
-# Convert to dict (great for JSON responses)
-model_to_dict(p)
-
-# Aggregations
-avg_price = Product.select(fn.AVG(Product.price)).scalar()
-total = Product.select(fn.SUM(Product.stock)).scalar()
-
-# Group by
-from peewee import fn
-query = (Product
-         .select(Product.category, fn.COUNT(Product.id).alias("count"))
-         .group_by(Product.category))
-```
-
-## Tips
-
-- Use `model_to_dict` from `playhouse.shortcuts` to convert model instances to dictionaries for JSON responses.
-- Wrap bulk inserts in `db.atomic()` for transactional safety and performance.
-- The template uses `teardown_appcontext` for connection cleanup, so connections are closed even when requests fail.
-- Check `.env.example` for all available configuration options.
+### Invalid input submitted
+Symptom: Client sends bad data.
+Fix: Input validation rejects all bad input before touching the DB.
+Returns 400 or 422 with descriptive JSON error.
